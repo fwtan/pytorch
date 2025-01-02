@@ -17,6 +17,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    Iterable,
     Iterator,
     List,
     Optional,
@@ -463,6 +464,13 @@ class AllocateLine(MemoryPlanningLine):
         if self.node.get_name() in V.graph.removed_buffers:
             return NullLine(self.wrapper)
 
+        if isinstance(self.node, ir.CppTemplateBuffer) and isinstance(
+            self.node.layout, ir.MultiOutputLayout
+        ):
+            # Keep the Grouped GEMM Template as AllocateLine, as we
+            # decide to allocate its MultiOutput in the AllocateLine.codegen
+            return self
+
         # try to reuse a recently freed buffer
         key = buffer_reuse_key(self.node)
         if config.allow_buffer_reuse and key in state:
@@ -481,8 +489,18 @@ class AllocateLine(MemoryPlanningLine):
 
     def codegen(self, code: IndentedBuffer) -> None:
         assert self.node.get_name() not in V.graph.removed_buffers
-        line = self.wrapper.make_buffer_allocation(self.node)
-        code.writeline(line)
+        if isinstance(self.node, ir.CppTemplateBuffer) and isinstance(
+            self.node.layout, ir.MultiOutputLayout
+        ):
+            assert isinstance(self.node.outputs, Iterable)
+            for output in self.node.outputs:
+                code.writeline(self.wrapper.make_buffer_allocation(output))
+            code.writeline(
+                self.wrapper.make_buffer_list(self.node.get_name(), self.node.outputs)
+            )
+        else:
+            line = self.wrapper.make_buffer_allocation(self.node)
+            code.writeline(line)
 
 
 @dataclasses.dataclass
@@ -2094,6 +2112,12 @@ class PythonWrapperCodegen(CodeGen):
         shape = tuple(buffer.get_size())
         stride = tuple(buffer.get_stride())
         return self.make_allocation(buffer.get_name(), device, dtype, shape, stride)
+
+    def make_buffer_list(self, name, outputs):
+        line = f"{name} = ["
+        for output in outputs:
+            line += f"{output.get_name()}, "
+        return line + "]"
 
     def make_allocation(self, name, device, dtype, shape, stride):
         if device.type in ("cpu", "cuda", "xpu"):
