@@ -936,10 +936,6 @@ class UserDefinedObjectVariable(UserDefinedVariable):
 
         return super().call_function(tx, args, kwargs)
 
-    def _check_for_getattribute(self):
-        if object_has_getattribute(self.value):
-            unimplemented("UserDefinedObjectVariable with custom __getattribute__")
-
     def _check_for_getattr(self):
         return get_custom_getattr(self.value)
 
@@ -978,7 +974,6 @@ class UserDefinedObjectVariable(UserDefinedVariable):
         return subobj
 
     def has_key_in_generic_dict(self, tx: "InstructionTranslator", key):
-        self._check_for_getattribute()
         if tx.output.side_effects.has_pending_mutation_of_attr(self, key):
             mutated_attr = tx.output.side_effects.load_attr(self, key, deleted_ok=True)
             return not isinstance(mutated_attr, variables.DeletedVariable)
