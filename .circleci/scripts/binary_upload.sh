@@ -78,7 +78,7 @@ s3_upload() {
     for pkg in ${PKG_DIR}/*.${extension}; do
       (
         set -x
-        ${AWS_S3_CP} --no-progress --acl public-read "${pkg}" "${s3_upload_dir}"
+        ${AWS_S3_CP} --no-progress --acl public-read "${pkg}" "${s3_upload_dir}" --checksum-algorithm sha256
       )
     done
   )
