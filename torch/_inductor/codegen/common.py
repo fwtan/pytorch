@@ -13,6 +13,7 @@ import re
 from enum import auto, Enum
 from itertools import chain
 from typing import Any, Callable, ClassVar, NamedTuple, Optional, TYPE_CHECKING, Union
+from typing_extensions import TypeAlias
 
 from torch.utils._ordered_set import OrderedSet
 
@@ -44,6 +45,10 @@ from ..utils import (
     unique,
 )
 from ..virtualized import ops, OpsHandler, OpsValue, ReductionType, StoreMode, V
+
+
+if TYPE_CHECKING:
+    from ..scheduler import BaseScheduling
 
 
 schedule_log = torch._logging.getArtifactLogger(__name__, "schedule")
@@ -189,6 +194,9 @@ class SizeArg:
         return None
 
 
+_SchedulingFactory: TypeAlias = Callable[..., "BaseScheduling"]
+
+
 @dataclasses.dataclass
 class TMADescriptorArg:
     name: str
@@ -196,7 +204,7 @@ class TMADescriptorArg:
 
 @dataclasses.dataclass
 class DeviceCodegen:
-    scheduling: Any
+    scheduling: _SchedulingFactory
     wrapper_codegen: type
     cpp_wrapper_codegen: type = type(None)
 
@@ -318,6 +326,7 @@ def get_backend_features(device: Union[torch.device, str, None]):
         device_type = device
         device = torch.device(device_type)
     scheduling = get_scheduling_for_device(device_type)
+    assert scheduling is not None
     return scheduling(None).get_backend_features(device)
 
 
@@ -327,8 +336,12 @@ def has_backend_feature(device, feature):
     return feature in get_backend_features(device)
 
 
-def get_scheduling_for_device(device: str):
-    return device_codegens[device].scheduling if device in device_codegens else None
+def get_scheduling_for_device(device_type: str) -> Optional[_SchedulingFactory]:
+    return (
+        device_codegens[device_type].scheduling
+        if device_type in device_codegens
+        else None
+    )
 
 
 def get_wrapper_codegen_for_device(device: str, cpp_wrapper: bool = False):
