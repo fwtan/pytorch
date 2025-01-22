@@ -56,10 +56,10 @@ class InductorChoices:
                 if torch.version.hip is None:
                     return CUDAConfigHeuristic()
                 else:
-                    return CUDAConfigHeuristic()
+                    return ROCmConfigHeuristic()
             elif device_type == "xpu":
                 return XPUConfigHeuristic()
-            elif torch.cuda.is_available():
+            else
                 return BaseConfigHeuristic()
         else:
             return torch._inductor.max_autotune_custom_heuristic
