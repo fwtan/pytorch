@@ -59,7 +59,7 @@ class InductorChoices:
                     return ROCmConfigHeuristic()
             elif device_type == "xpu":
                 return XPUConfigHeuristic()
-            else
+            else:
                 return BaseConfigHeuristic()
         else:
             return torch._inductor.max_autotune_custom_heuristic
