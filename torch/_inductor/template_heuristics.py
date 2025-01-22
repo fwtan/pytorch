@@ -371,7 +371,7 @@ class BaseConfigHeuristic:
         return partial(self.preprocess_mm_configs, configs=filtered_configs)
 
     def get_mixed_mm_configs(self) -> List[Dict[str, Any]]:
-        filtered_configs = self._filter_configs(self.mixed_mm_configs)
+        filtered_configs = self._filter_configs(self.mm_kernel_configs + self.mixed_mm_configs)
         return partial(self.preprocess_mm_configs, configs=filtered_configs)
 
     def get_persistent_mm_configs(self) -> List[Dict[str, Any]]:
@@ -394,16 +394,6 @@ class BaseConfigHeuristic:
         filtered_configs = self._filter_configs(self.conv_configs)
         return partial(self.preprocess_mm_configs, configs=filtered_configs)
 
-
-class CPUConfigHeuristic(BaseConfigHeuristic):
-    def get_conv_configs(self) -> List[Dict[str, Any]]:
-        filtered_configs = self._filter_configs(self.conv_configs)
-        return partial(
-            self.preprocess_mm_configs,
-            configs=filtered_configs,
-            scale=0.5,
-            exclude=_is_large_block_for_cpu,
-        )
 
 
 class CUDAConfigHeuristic(BaseConfigHeuristic):

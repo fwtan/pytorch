@@ -3,6 +3,7 @@ import logging
 from typing import List, TYPE_CHECKING
 
 from ..select_algorithm import autotune_select_algorithm, TritonTemplate
+from ..virtualized import V
 from .mm_common import mm_args, mm_grid, mm_options
 
 
@@ -78,7 +79,7 @@ def tuned_uint4x2_mixed_mm(mat1, mat2, mat2_mm_shape, mat2_dtype):
     choices: List[ChoiceCaller] = []
     b_prologue_cast_type = f"tl.{mat2_dtype}".replace("torch.", "")
 
-    mm_configs = V.choices.get_mm_configs()
+    mm_configs = V.choices.get_base_mm_configs()
 
     for config in mm_configs(m, n, k):
         uint4x2_mixed_mm_template.maybe_append_choice(
