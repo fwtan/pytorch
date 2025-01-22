@@ -578,9 +578,10 @@ class CompiledAOTI(OutputCode):
     """
 
     filename: Union[str, list[str]]
+    current_callable: Optional[Callable[..., Any]]
 
-    def __call__(self, inputs: Sequence[Any]) -> Any:
-        raise NotImplementedError("NYI")
+    def __call__(self, *inputs: Any) -> Any:
+        return self.current_callable(inputs)
 
     def post_compile(
         self,

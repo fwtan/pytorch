@@ -541,6 +541,7 @@ def compile_fx_inner(
     kwargs.setdefault("boxed_forward_device_index", None)
     kwargs.setdefault("layout_opt", None)
     kwargs.setdefault("extern_node_serializer", None)
+    kwargs.setdefault("name", None)
 
     # Need with_fresh_cache_if_config for compile_fx_inner even if we already have one for
     # compile_fx. The reason is the compilation for backward graph may happen after
@@ -576,6 +577,29 @@ def compile_fx_inner(
         )
 
 
+_PRECOMPILES: Dict[str, List[Any]] = {}
+
+def _get_precompile(name: Optional[str], example_inputs: Sequence[InputType]) -> Any:
+    if name is None:
+        return None
+    candidates = _PRECOMPILES.get(name)
+    if candidates is None:
+        return None
+    if len(candidates) > 1:
+        raise RuntimeError("Recompiles NYI")
+    return candidates[0]
+        
+
+def _load_precompile(path, name):
+    import torch._inductor.package
+    # TODO Support recompiles.
+    model = torch._inductor.package.load_package(path, name)
+    # TODO boxed or unboxed?
+    def precompiled(*args):
+        return model.loader.run(args)
+    _PRECOMPILES[name] = [precompiled]
+
+
 @time_and_log(attr="compilation time (in seconds)")
 def _compile_fx_inner(
     gm: GraphModule,
@@ -588,7 +612,7 @@ def _compile_fx_inner(
     If you change the argument list for this function, make sure you
     also update the call to save_args_for_compile_fx_inner below accordingly.
     """
-    aot_mode: bool = V.aot_compilation
+    aot_mode: bool = V.aot_compilation or (torch.compiler._get_fullgraph_package() is not None)
 
     if dynamo_utils.count_calls(gm.graph) == 0 and not aot_mode:
         # trigger the real recompilation for _LazyGraphModule before returning
@@ -614,6 +638,9 @@ def _compile_fx_inner(
             example_inputs,
             **graph_kwargs,
         )
+
+    if precompile := _get_precompile(graph_kwargs.get("name"), example_inputs):
+        return precompile
 
     start = time.time()
 
@@ -816,7 +843,7 @@ class _InProcessFxCompile(FxCompile):
         is_backward: bool = graph_kwargs.get("is_backward", False)
         graph_id: Optional[int] = graph_kwargs.get("graph_id", None)
         cpp_wrapper: bool = graph_kwargs.get("cpp_wrapper", False)
-        aot_mode: bool = V.aot_compilation
+        aot_mode: bool = V.aot_compilation or (torch.compiler._get_fullgraph_package() is not None)
         is_inference: bool = graph_kwargs.get("is_inference", False)
         extern_node_serializer: Optional[
             Callable[[list[ExternKernelNode]], Any]
@@ -1100,9 +1127,31 @@ class _InProcessFxCompile(FxCompile):
                                 disable = f"{disable} Found from {stack_trace}\n"
                             V.graph.disable_cudagraphs_reason = disable
 
-                    if V.aot_compilation:
+                    if aot_mode:
+                        current_callable = None
                         assert isinstance(compiled_fn, (str, list))
-                        return CompiledAOTI(compiled_fn)
+                        if p := torch.compiler._get_fullgraph_package():
+                            if graph_kwargs.get("name") is None:
+                                raise RuntimeError(
+                                    "fullgraph package mode requires a model name to be specified with" +
+                                    " torch.compile(name=...)"
+                                )
+                            p.add_aoti(graph_kwargs["name"], compiled_fn)
+
+                            if isinstance(compiled_fn, list):
+                                current_callable = next(fn for fn in compiled_fn if fn.endswith(".so"))
+                            else:
+                                current_callable = compiled_fn
+    
+                            if graph.device_type.startswith("cuda"):
+                                current_callable = torch._C._aoti.AOTIModelContainerRunnerCuda(current_callable, 1, graph.device_type).run
+                            elif graph.device_type == "cpu":
+                                current_callable = torch._C._aoti.AOTIModelContainerRunnerCpu(current_callable, 1).run
+                            elif graph.device_type == "xpu":
+                                current_callable = torch._C._aoti.AOTIModelContainerRunnerXpu(current_callable, 1, graph.device_type).run
+                            else:
+                                raise RuntimeError(f"Unsupported device type {graph.device_type}")
+                        return CompiledAOTI(compiled_fn, current_callable)
 
                     # TODO: Hoist this above V.aot_compilation
                     if cudagraphs and not V.graph.disable_cudagraphs_reason:
@@ -1550,6 +1599,7 @@ def compile_fx(
     inner_compile: Callable[..., OutputCode] = compile_fx_inner,
     config_patches: Optional[dict[str, Any]] = None,
     decompositions: Optional[dict[OpOverload, Callable[..., Any]]] = None,
+    name: Optional[str] = None,
 ) -> Union[Callable[[list[object]], Sequence[torch.Tensor]], str, list[str]]:
     """
     Main entry point for compiling given FX graph.  Despite the fact that this
@@ -1575,6 +1625,9 @@ def compile_fx(
                 inner_compile=config.patch(config_patches)(inner_compile),
                 decompositions=decompositions,
             )
+    
+    if name is not None:
+        inner_compile = functools.partial(inner_compile, name=name)
 
     # TODO: This probably shouldn't be a recursive call
     if config.cpp_wrapper:
