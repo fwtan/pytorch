@@ -42,6 +42,7 @@ from torch.fx.experimental import symbolic_shapes
 from torch.utils import _pytree as pytree
 from torch.utils._pytree import treespec_dumps, treespec_loads
 from torch.utils._sympy.numbers import int_oo
+from torch.utils._sympy.symbol import symbol_is_type, SymT
 from torch.utils._sympy.value_ranges import ValueRanges
 
 from ..utils import remove_proxy_from_state_dict
@@ -595,6 +596,11 @@ class GraphModuleSerializer(metaclass=Final):
 
     def serialize_metadata(self, node: torch.fx.Node) -> dict[str, str]:
         ret = {}
+        if unbacked_bindings := node.meta.get("unbacked_bindings"):
+            ret["unbacked_bindings"] = ",".join(
+                u.name for u in unbacked_bindings.keys()
+            )
+
         if stack_trace := node.meta.get("stack_trace"):
             ret["stack_trace"] = stack_trace
 
@@ -1839,6 +1845,20 @@ class GraphModuleDeserializer(metaclass=Final):
             )
 
         fx_node.meta.update(self.deserialize_metadata(serialized_node.metadata))
+        if "unbacked_bindings" in serialized_node.metadata:
+            for u_name in serialized_node.metadata["unbacked_bindings"].split(","):
+                u = self.symbol_name_to_symbol[u_name]
+                if symbol_is_type(u, SymT.UNBACKED_FLOAT):
+                    next(self.shape_env.unbacked_symfloat_counter)
+                elif symbol_is_type(u, SymT.UNBACKED_INT):
+                    next(self.shape_env.unbacked_symint_counter)
+                else:
+                    raise AssertionError(f"Illegal unbacked symbol {u}")
+                self.shape_env.pending_fresh_unbacked_symbols.append(u)
+            unbacked_bindings = symbolic_shapes.compute_unbacked_bindings(
+                self.shape_env, fx_node.meta["val"]
+            )
+            fx_node.meta["unbacked_bindings"] = unbacked_bindings
         if fx_node.op not in ["placeholder", "output"] and "nn_module_stack" not in fx_node.meta:
             fx_node.meta["nn_module_stack"] = {}  # serialization throws away empty dicts
 
